@@ -1,0 +1,613 @@
+\documentclass{article}
+
+\usepackage{booktabs}
+\usepackage{float}
+
+\begin{document}
+
+\title{Testy normalności}
+\author{Natalia Martyniuk}
+\date{}
+\maketitle
+
+<<biblioteki, echo=FALSE, message=FALSE, warning=FALSE>>=
+library(ggplot2)
+library(nortest)
+library(tseries)
+library(moments)
+library(DescTools)
+library(fBasics)
+library(knitr)
+library(future.apply)
+
+
+plan(multisession, workers = parallel::detectCores() - 1)
+@
+
+\section{Moc testów}
+<<Symulacja_moc, echo=FALSE, warning=FALSE>>=
+zone_test <- function(x) {
+
+  n <- length(x)
+  xn <- mean(x)
+  sn <- sd(x)
+
+  A_n <- numeric(n)
+
+  for (k in 1:n) {
+    if (x[k] >= xn - sn && x[k] <= xn + sn) {
+      A_n[k] <- 1
+    } else if ((x[k] >= xn - 1.96*sn && x[k] < xn - sn) ||
+               (x[k] > xn + sn && x[k] <= xn + 1.96*sn)) {
+      A_n[k] <- 1.96
+    } else if ((x[k] >= xn - 2.58*sn && x[k] < xn - 1.96*sn) ||
+               (x[k] > xn + 1.96*sn && x[k] <= xn + 2.58*sn)) {
+      A_n[k] <- 2.58
+    } else {
+      A_n[k] <- 2.81
+    }
+  }
+
+  a <- mean(A_n)
+
+  m <- c(5,10,20,30,50,100,200,300,500,1000,1500,2000)
+
+  q <- c(0.01,0.025,0.05,0.1,0.15,0.2,0.5,
+         0.8,0.85,0.9,0.95,0.975,0.99)
+
+  D <- matrix(c(
+1.1920,1.1920,1.1920,1.1920,1.1920,1.1920,1.3840,1.3840,1.3840,1.3840,1.3840,1.3840,1.3840,
+1.1580,1.1580,1.1580,1.1920,1.1920,1.1920,1.2880,1.3840,1.3840,1.3840,1.4800,1.4800,1.4800,
+1.1865,1.2230,1.2230,1.2400,1.2710,1.2710,1.3190,1.3785,1.3840,1.3840,1.4320,1.4320,1.4630,
+1.2203,1.2410,1.2540,1.2730,1.2843,1.2860,1.3293,1.3727,1.3820,1.3933,1.4047,1.4253,1.4480,
+1.2508,1.2608,1.2722,1.2868,1.2970,1.3050,1.3320,1.3636,1.3704,1.3828,1.3964,1.4088,1.4212,
+1.2750,1.2608,1.2722,1.3021,1.3089,1.3145,1.3366,1.3586,1.3636,1.3704,1.3800,1.3868,1.3987,
+1.2936,1.3008,1.3067,1.3134,1.3180,1.3216,1.3371,1.3530,1.3564,1.3611,1.3676,1.3735,1.3812,
+1.3019,1.3076,1.3125,1.3179,1.3217,1.3247,1.3375,1.3503,1.3533,1.3570,1.3623,1.3674,1.3731,
+1.3100,1.3144,1.3182,1.3225,1.3254,1.3277,1.3377,1.3477,1.3501,1.3528,1.3572,1.3608,1.3651,
+1.3184,1.3213,1.3240,1.3270,1.3290,1.3307,1.3377,1.3448,1.3464,1.3484,1.3514,1.3541,1.3572,
+1.3219,1.3244,1.3266,1.3291,1.3307,1.3320,1.3378,1.3436,1.3449,1.3466,1.3491,1.3512,1.3538,
+1.3241,1.3263,1.3281,1.3302,1.3317,1.3328,1.3378,1.3428,1.3440,1.3455,1.3476,1.3495,1.3516
+), nrow=12, byrow=TRUE)
+
+  idx <- which.min(abs(m - n))
+
+  row <- D[idx,]
+
+  p <- 0
+
+  for (h in 1:(length(q)-1)) {
+
+    if (a >= row[h] && a <= row[h+1]) {
+
+      p <- 2*min(mean(c(q[h],q[h+1])),
+                 1-mean(c(q[h],q[h+1])))
+    }
+  }
+
+  return(p)
+}
+
+run_tests <- function(x) {
+
+  res <- c(
+    SW= shapiro.test(x)$p.value,
+    AD = ad.test(x)$p.value,
+    KS = ks.test(x, "pnorm", mean = 0, sd = 1)$p.value,
+    CVM = cvm.test(x)$p.value,
+    LF = lillie.test(x)$p.value,
+    JB = jarque.bera.test(x)$p.value,
+    DA = unname(dagoTest(x)@test$p.value[1]),
+    SF = ShapiroFranciaTest(x)$p.value,
+    Zone = zone_test(x)
+  )
+
+  return(res)
+}
+
+
+distributions <- c(
+  "normal", "t3", "cauchy", "lognormal",
+  "gamma", "chisq", "exponential", "mixed_normal"
+)
+
+
+generate_sample <- function(n, dist_name) {
+
+  switch(dist_name,
+
+    "normal" = rnorm(n),
+
+    "t3" = rt(n, df = 3),
+
+    "cauchy" = rcauchy(n, 0, 2),
+
+    "lognormal" = rlnorm(n),
+
+    "gamma" = rgamma(n, 3, 2),
+
+    "chisq" = rchisq(n, 2),
+
+    "exponential" = rexp(n),
+
+    "mixed_normal" = {
+      n1 <- floor(n / 2)
+      n2 <- n - n1
+      sample(c(rnorm(n1, 0, 1), rnorm(n2, 3, 1)))
+    }
+
+  )
+}
+
+
+
+run_simulation <- function(n_sim, n) {
+
+  results_list <- list()
+
+  for (dist in distributions) {
+
+    p_matrix <- t(replicate(n_sim,
+                            run_tests(generate_sample(n, dist))))
+
+    rejection_rate <- colMeans(p_matrix <= 0.05)
+
+    results_list[[dist]] <- data.frame(
+      Distribution = dist,
+      t(rejection_rate),
+      check.names = FALSE
+    )
+  }
+
+  final_df <- do.call(rbind, results_list)
+
+  rownames(final_df) <- NULL
+
+  return(final_df)
+}
+@
+
+<<tabela_n25_500, echo=FALSE, results='asis', warning=FALSE>>=
+
+set.seed(123)
+
+wyniki1 <- run_simulation(n_sim = 500, n = 25)
+
+wyniki1_moc <- wyniki1[wyniki1$Distribution != "normal", ]
+
+kable(
+  wyniki1_moc,
+  caption = "Moc testów dla n = 25 i 500 powtórzeń Monte Carlo",
+  row.names = FALSE,
+  digits = 3
+)
+@
+
+<<tabela_n50_500, echo=FALSE, results='asis', warning=FALSE>>=
+
+wyniki2 <- run_simulation(n_sim = 500, n = 50)
+wyniki2_moc <- wyniki2[wyniki2$Distribution != "normal", ]
+kable(
+  wyniki2_moc,
+  caption = "Moc testów dla n = 50 i 500 powtórzeń Monte Carlo",
+  row.names = FALSE,
+  digits = 3
+)
+@
+
+<<tabela_n100_500, echo=FALSE, results='asis', warning=FALSE>>=
+
+wyniki3 <- run_simulation(n_sim = 500, n = 100)
+wyniki3_moc <- wyniki3[wyniki3$Distribution != "normal", ]
+kable(
+  wyniki3_moc,
+  caption = "Moc testów dla n = 100 i 500 powtórzeń Monte Carlo",
+  row.names = FALSE,
+  digits = 3
+)
+@
+
+<<tabela_n500_500, echo=FALSE, results='asis', warning=FALSE>>=
+
+wyniki4 <- run_simulation(n_sim = 500, n = 500)
+wyniki4_moc <- wyniki4[wyniki4$Distribution != "normal", ]
+kable(
+  wyniki4_moc,
+  caption = "Moc testów dla n = 500 i 500 powtórzeń Monte Carlo",
+  row.names = FALSE,
+  digits = 3
+)
+@
+
+<<tabela_n25_1000, echo=FALSE, results='asis', warning=FALSE>>=
+
+set.seed(123)
+
+wyniki5 <- run_simulation(n_sim = 1000, n = 25)
+wyniki5_moc <- wyniki5[wyniki5$Distribution != "normal", ]
+kable(
+  wyniki5_moc,
+  caption = "Moc testów dla n = 25 i 1000 powtórzeń Monte Carlo",
+  row.names = FALSE,
+  digits = 3
+)
+@
+
+<<tabela_n50_1000, echo=FALSE, results='asis', warning=FALSE>>=
+
+wyniki6 <- run_simulation(n_sim = 1000, n = 50)
+wyniki6_moc <- wyniki6[wyniki6$Distribution != "normal", ]
+kable(
+  wyniki6_moc,
+  caption = "Moc testów dla n = 50 i 1000 powtórzeń Monte Carlo",
+  row.names = FALSE,
+  digits = 3
+)
+@
+
+<<tabela_n100_1000, echo=FALSE, results='asis', warning=FALSE>>=
+
+wyniki7 <- run_simulation(n_sim = 1000, n = 100)
+wyniki7_moc <- wyniki7[wyniki7$Distribution != "normal", ]
+kable(
+  wyniki7_moc,
+  caption = "Moc testów dla n = 100 i 1000 powtórzeń Monte Carlo",
+  row.names = FALSE,
+  digits = 3
+)
+@
+
+<<tabela_n500_1000, echo=FALSE, results='asis', warning=FALSE>>=
+
+wyniki8 <- run_simulation(n_sim = 1000, n = 500)
+wyniki8_moc <- wyniki8[wyniki8$Distribution != "normal", ]
+kable(
+  wyniki8_moc,
+  caption = "Moc testów dla n = 500 i 1000 powtórzeń Monte Carlo",
+  row.names = FALSE,
+  digits = 3
+)
+@
+
+<<tabela_n25_5000, echo=FALSE, results='asis', warning=FALSE>>=
+
+wyniki9 <- run_simulation(n_sim = 5000, n = 25)
+wyniki9_moc <- wyniki9[wyniki9$Distribution != "normal", ]
+kable(
+  wyniki9_moc,
+  caption = "Moc testów dla n = 25 i 5000 powtórzeń Monte Carlo",
+  row.names = FALSE,
+  digits = 3
+)
+@
+
+<<tabela_n50_5000, echo=FALSE, results='asis', warning=FALSE>>=
+
+wyniki10 <- run_simulation(n_sim = 5000, n = 50)
+wyniki10_moc <- wyniki10[wyniki10$Distribution != "normal", ]
+kable(
+  wyniki10_moc,
+  caption = "Moc testów dla n = 50 i 5000 powtórzeń Monte Carlo",
+  row.names = FALSE,
+  digits = 3
+)
+@
+
+<<tabela_n100_5000, echo=FALSE, results='asis', warning=FALSE>>=
+
+wyniki11 <- run_simulation(n_sim = 5000, n = 100)
+wyniki11_moc <- wyniki11[wyniki11$Distribution != "normal", ]
+kable(
+  wyniki11_moc,
+  caption = "Moc testów dla n = 100 i 5000 powtórzeń Monte Carlo",
+  row.names = FALSE,
+  digits = 3
+)
+@
+
+<<tabela_n500_5000, echo=FALSE, results='asis', warning=FALSE>>=
+
+wyniki12 <- run_simulation(n_sim = 5000, n = 500)
+wyniki12_moc <- wyniki12[wyniki12$Distribution != "normal", ]
+kable(
+  wyniki12_moc,
+  caption = "Moc testów dla n = 500 i 5000 powtórzeń Monte Carlo",
+  row.names = FALSE,
+  digits = 3
+)
+@
+
+\section{Błąd pierwszego rodzaju}
+<<Blad_I, echo=FALSE, warning=FALSE>>=
+run_tests_bez_M1 <- function(x) {
+  
+  res <- c(
+    SW = shapiro.test(x)$p.value,
+    AD = ad.test(x)$p.value,
+    KS = ks.test(x, "pnorm", mean = 0, sd = 1)$p.value,
+    CVM = cvm.test(x)$p.value,
+    LF = lillie.test(x)$p.value,
+    JB = jarque.bera.test(x)$p.value,
+    DA = unname(dagoTest(x)@test$p.value[1]),
+    SF = ShapiroFranciaTest(x)$p.value,
+    Zone = zone_test(x)
+  )
+  
+  return(res)
+}
+
+blad_I_rodzaju <- function(n_sim, n, alpha = 0.05) {
+  
+  p_matrix <- t(future_replicate(
+    n_sim,
+    run_tests_bez_M1(rnorm(n)),
+    future.seed = TRUE
+  ))
+  
+  rejection_rate <- colMeans(p_matrix <= alpha)
+  
+  wynik <- data.frame(
+    n = n,
+    MC = n_sim,
+    t(rejection_rate),
+    check.names = FALSE
+  )
+  
+  return(wynik)
+}
+set.seed(123)
+
+n_values <- c(25, 50, 100, 500)
+mc_values <- c(500, 1000, 5000)
+
+tabela_blad_I <- do.call(
+  rbind,
+  lapply(mc_values, function(mc) {
+    do.call(
+      rbind,
+      lapply(n_values, function(n) {
+        blad_I_rodzaju(n_sim = mc, n = n)
+      })
+    )
+  })
+)
+
+rownames(tabela_blad_I) <- NULL
+@
+
+<<tabele_blad_I, echo=FALSE, results='asis', warning=FALSE>>=
+tabela_MC_500 <- subset(tabela_blad_I, MC == 500)
+tabela_MC_1000 <- subset(tabela_blad_I, MC == 1000)
+tabela_MC_5000 <- subset(tabela_blad_I, MC == 5000)
+
+kable(tabela_MC_500, caption = "Empiryczny błąd pierwszego rodzaju, MC = 500", digits = 3, row.names = FALSE)
+
+kable(tabela_MC_1000, caption = "Empiryczny błąd pierwszego rodzaju, MC = 1000", digits = 3, row.names = FALSE)
+
+kable(tabela_MC_5000, caption = "Empiryczny błąd pierwszego rodzaju, MC = 5000", digits = 3, row.names = FALSE)
+@
+
+
+<<wykres_blad_pierwszego_rodzaju, echo=FALSE, warning=FALSE>>=
+dane <- tabela_MC_5000
+
+ggplot() +
+  geom_line(data = dane, aes(x = n, y = SW, color = "SW")) +
+  geom_point(data = dane, aes(x = n, y = SW, color = "SW")) +
+  
+  geom_line(data = dane, aes(x = n, y = AD, color = "AD")) +
+  geom_point(data = dane, aes(x = n, y = AD, color = "AD")) +
+  
+  geom_line(data = dane, aes(x = n, y = KS, color = "KS")) +
+  geom_point(data = dane, aes(x = n, y = KS, color = "KS")) +
+  
+  geom_line(data = dane, aes(x = n, y = CVM, color = "CVM")) +
+  geom_point(data = dane, aes(x = n, y = CVM, color = "CVM")) +
+  
+  geom_line(data = dane, aes(x = n, y = LF, color = "LF")) +
+  geom_point(data = dane, aes(x = n, y = LF, color = "LF")) +
+  
+  geom_line(data = dane, aes(x = n, y = JB, color = "JB")) +
+  geom_point(data = dane, aes(x = n, y = JB, color = "JB")) +
+  
+  geom_line(data = dane, aes(x = n, y = DA, color = "DA")) +
+  geom_point(data = dane, aes(x = n, y = DA, color = "DA")) +
+  
+  geom_line(data = dane, aes(x = n, y = SF, color = "SF")) +
+  geom_point(data = dane, aes(x = n, y = SF, color = "SF")) +
+  
+  geom_line(data = dane, aes(x = n, y = Zone, color = "Zone")) +
+  geom_point(data = dane, aes(x = n, y = Zone, color = "Zone")) +
+  
+  geom_hline(yintercept = 0.05, linetype = "dashed") +
+  scale_x_continuous(breaks = c(25, 50, 100, 500)) +
+  
+  labs(
+    x = "Liczebność próby n",
+    y = "Empiryczny błąd I rodzaju",
+    color = "Test"
+  ) +
+  theme_minimal()
+@
+
+<<wykresy_mocy, echo=FALSE, warning=FALSE, message=FALSE>>=
+
+przygotuj_dane_mocy <- function(lista_wynikow, liczebnosci) {
+  testy <- c("SW", "AD", "CVM", "LF", "JB", "DA", "SF", "Zone")
+  dane <- data.frame()
+  
+  for (i in seq_along(lista_wynikow)) {
+
+    tabela <- lista_wynikow[[i]]
+    tabela$n <- liczebnosci[i]
+    tabela <- tabela[, c("Distribution", "n", testy)]
+    dane <- rbind(dane, tabela)
+  }
+
+  dane_dlugie <- data.frame()
+  for (test in testy) {
+
+    fragment <- data.frame(
+      Distribution = dane$Distribution,
+      n = dane$n,
+      Test = test,
+      Moc = dane[[test]]
+    )
+
+    dane_dlugie <- rbind(dane_dlugie, fragment)
+  }
+
+  nazwy_rozkladow <- c(
+    "t3" = "t(3)",
+    "cauchy" = "Cauchy",
+    "lognormal" = "Lognormalny",
+    "gamma" = "Gamma",
+    "chisq" = "Chi-kwadrat (2)",
+    "exponential" = "Wykładniczy",
+    "mixed_normal" = "Mieszany normalny"
+  )
+
+  dane_dlugie$Rozklad <-
+    nazwy_rozkladow[dane_dlugie$Distribution]
+
+  dane_dlugie$n <- factor(
+    dane_dlugie$n,
+    levels = c(25, 50, 100, 500)
+  )
+
+  dane_dlugie$Test <- factor(
+    dane_dlugie$Test,
+    levels = testy
+  )
+
+  dane_dlugie$Rozklad <- factor(
+    dane_dlugie$Rozklad,
+    levels = c(
+      "t(3)",
+      "Cauchy",
+      "Lognormalny",
+      "Gamma",
+      "Chi-kwadrat (2)",
+      "Wykładniczy",
+      "Mieszany normalny"
+    )
+  )
+
+  return(dane_dlugie)
+}
+dane_moc_500 <- przygotuj_dane_mocy(
+  lista_wynikow = list(
+    wyniki1_moc,
+    wyniki2_moc,
+    wyniki3_moc,
+    wyniki4_moc
+  ),
+  liczebnosci = c(25, 50, 100, 500)
+)
+
+dane_moc_1000 <- przygotuj_dane_mocy(
+  lista_wynikow = list(
+    wyniki5_moc,
+    wyniki6_moc,
+    wyniki7_moc,
+    wyniki8_moc
+  ),
+  liczebnosci = c(25, 50, 100, 500)
+)
+
+dane_moc_5000 <- przygotuj_dane_mocy(
+  lista_wynikow = list(
+    wyniki9_moc,
+    wyniki10_moc,
+    wyniki11_moc,
+    wyniki12_moc
+  ),
+  liczebnosci = c(25, 50, 100, 500)
+)
+
+nazwy_plikow <- c(
+  "t(3)" = "t3",
+  "Cauchy" = "cauchy",
+  "Lognormalny" = "lognormalny",
+  "Gamma" = "gamma",
+  "Chi-kwadrat (2)" = "chi_kwadrat",
+  "Wykładniczy" = "wykladniczy",
+  "Mieszany normalny" = "mieszany_normalny"
+)
+
+zapisz_wykresy_mocy <- function(dane, MC) {
+
+  lista_wykresow <- list()
+  for (rozklad in levels(dane$Rozklad)) {
+
+    dane_wykres <- dane[dane$Rozklad == rozklad, ]
+    wykres <- ggplot(
+      dane_wykres,
+      aes(
+        x = n,
+        y = Moc,
+        group = Test,
+        color = Test
+      )
+    ) +
+      geom_line(linewidth = 0.9) +
+      geom_point(size = 2.5) +
+      scale_y_continuous(
+        limits = c(0, 1),
+        breaks = seq(0, 1, by = 0.1)
+      ) +
+      labs(
+        x = "Liczebność próby",
+        y = "Moc",
+        color = "Test"
+      ) +
+      theme_minimal(base_size = 12) +
+      theme(
+        plot.title = element_text(
+          hjust = 0.5,
+          face = "bold"
+        ),
+        legend.position = "bottom",
+        legend.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank()
+      ) +
+      guides(
+        color = guide_legend(nrow = 1)
+      )
+
+    nazwa_pliku <- paste0(
+      "moc_",
+      nazwy_plikow[rozklad],
+      "_MC",
+      MC,
+      ".pdf"
+    )
+
+    ggsave(
+      filename = nazwa_pliku,
+      plot = wykres,
+      width = 9,
+      height = 6
+    )
+
+    lista_wykresow[[rozklad]] <- wykres
+  }
+
+  return(lista_wykresow)
+}
+
+@
+
+<<wykresy_moc, echo=FALSE, warning=FALSE, message=FALSE>>=
+wykresy_moc_500 <- zapisz_wykresy_mocy(
+  dane = dane_moc_500,
+  MC = 500
+)
+
+wykresy_moc_5000 <- zapisz_wykresy_mocy(
+  dane = dane_moc_5000,
+  MC = 5000
+)
+@
+
+\end{document}
