@@ -4,7 +4,7 @@ Repozytorium zawiera kody wykorzystane w części symulacyjnej pracy magisterski
 
 ## Zawartość repozytorium
 
--"Symulacje_bez_testu_M1.Rnw" – plik zawierający kody służące do obliczenia empirycznego błędu pierwszego rodzaju, mocy wybranych testów normalności oraz do przygotowania tabel i wykresów. W tym pliku nie uwzględniono testu opartego na statystyce $M_1$.
+- "Symulacje_bez_testu_M1.Rnw" – plik zawierający kody służące do obliczenia empirycznego błędu pierwszego rodzaju, mocy wybranych testów normalności oraz do przygotowania tabel i wykresów. W tym pliku nie uwzględniono testu opartego na statystyce $M_1$.
 
 - "Symulacje_z_testem_M1.Rnw" – plik zawierający kody służące do porównania mocy testów z uwzględnieniem testu opartego na statystyce $M_1$. Plik zawiera również tabele wykorzystane do porównania wyników.
 
